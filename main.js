@@ -270,11 +270,81 @@ function draw() {
   // fireflies
   for (const f of flies) { const x = (f.x * VW + Math.sin(now * 0.4 + f.p) * 30) % VW, y = (f.y * VH + Math.cos(now * 0.3 + f.p) * 20); const a = 0.3 + 0.5 * Math.max(0, Math.sin(now * 2 + f.p * 3)); ctx.fillStyle = `rgba(220,255,120,${a})`; ctx.beginPath(); ctx.arc(x, y, 1.8, 0, 7); ctx.fill(); }
   buttons = [];
-  if (S.screen === 'title') return drawTitle();
-  drawPlay();
+  if (S.screen === 'title') drawTitle();
+  else drawPlay();
   if (S.screen === 'paused') drawPause();
   if (S.screen === 'over') drawOver();
+  if (S.overlay === 'settings') drawSettings();
+  if (PAD.on) drawPadHints();
 }
+// ---------- Xbox controller (standard mapping) ----------
+const PAD = { on: false, prev: [], dir: null, navT: 0, focus: 0 };
+function glyph(kind, x, y, r) {
+  const C = { A: '#3cb44a', B: '#e0403a', X: '#3a7ae0', Y: '#e8c030' };
+  ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fillStyle = C[kind] || '#3a3f48'; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1.2, r * 0.16);
+  if (kind === 'Menu') { for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(x - r * 0.45, y + i * r * 0.32); ctx.lineTo(x + r * 0.45, y + i * r * 0.32); ctx.stroke(); } }
+  else if (kind === 'View') { ctx.strokeRect(x - r * 0.45, y - r * 0.32, r * 0.55, r * 0.45); ctx.strokeRect(x - r * 0.1, y - r * 0.05, r * 0.55, r * 0.45); }
+  else { ctx.font = `900 ${Math.round(r * 1.25)}px system-ui,sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(kind, x, y + 1); }
+  ctx.restore();
+}
+function hintsFor() {
+  if (S.overlay === 'settings') return [['A', 'Toggle'], ['B', 'Back']];
+  if (S.screen === 'title') return [['A', 'Select'], ['View', 'Settings']];
+  if (S.screen === 'play') return [['Menu', 'Pause'], ['View', 'Settings']];
+  if (S.screen === 'paused') return [['A', 'Select'], ['B', 'Resume'], ['View', 'Settings']];
+  if (S.screen === 'over') return [['A', 'Select'], ['B', 'Main menu']];
+  return [];
+}
+function drawPadHints() {
+  if (S.screen === 'play' && !S.overlay) { glyph('Menu', VW - 64, 30, 9); return; }
+  const hs = hintsFor(); ctx.font = '700 13px system-ui,sans-serif'; let w = 0; for (const [, t] of hs) w += 26 + ctx.measureText(t).width + 16;
+  let x = (VW - w) / 2; const y = VH - 18;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.beginPath(); ctx.roundRect(x - 10, y - 15, w + 12, 30, 15); ctx.fill();
+  for (const [k, t] of hs) { glyph(k, x + 10, y, 10); x += 26; txt(t, x, y, 13, '#e9f6d6', 'left', 700); ctx.font = '700 13px system-ui,sans-serif'; x += ctx.measureText(t).width + 16; }
+  // focus ring
+  const list = navButtons(); const b = list[PAD.focus % Math.max(1, list.length)];
+  if (b) { ctx.save(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.shadowColor = '#ffe27a'; ctx.shadowBlur = 10; ctx.beginPath(); ctx.roundRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8, 16); ctx.stroke(); ctx.restore(); if (b.style === 'primary' || list.length) glyph('A', b.x + b.w - 14, b.y + 14, 9); }
+}
+function navButtons() { return S.screen === 'play' && !S.overlay ? [] : buttons.filter(b => b.id !== 'pause'); }
+function drawSettings() {
+  buttons = []; const w = Math.min(320, VW - 40), [x, y] = panel(w, 250); txt('SETTINGS', VW / 2, y + 38, 26, '#ffe27a');
+  button('dpad', 'On-screen D-pad: ' + (S.dpad ? 'ON' : 'OFF'), x + 24, y + 70, w - 48, 46); button('sound', 'Sound: ' + (S.sound ? 'ON' : 'OFF'), x + 24, y + 126, w - 48, 46); button('done', 'Done', x + 24, y + 186, w - 48, 46, 'primary'); drawButtons();
+}
+function openSettings() { if (S.screen === 'play') S.screen = 'paused'; S.overlay = 'settings'; PAD.focus = 0; }
+function closeOverlay() { S.overlay = null; PAD.focus = 0; }
+function pollPad(dt) {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : []; let gp = null;
+  for (const p of pads) if (p && p.connected) { if (p.mapping === 'standard') { gp = p; break; } if (!gp) gp = p; }
+  if (!gp) { PAD.on = false; return; }
+  const btn = i => !!(gp.buttons[i] && (gp.buttons[i].pressed || gp.buttons[i].value > 0.5));
+  const cur = gp.buttons.map((_, i) => btn(i)), old = PAD.prev; const edge = i => cur[i] && !old[i]; PAD.prev = cur;
+  const ax = gp.axes[0] || 0, ay = gp.axes[1] || 0; let d = null;
+  if (btn(12)) d = 'up'; else if (btn(13)) d = 'down'; else if (btn(14)) d = 'left'; else if (btn(15)) d = 'right';
+  else if (Math.hypot(ax, ay) > 0.5) d = Math.abs(ax) > Math.abs(ay) ? (ax > 0 ? 'right' : 'left') : (ay > 0 ? 'down' : 'up');
+  if (!PAD.on && (d || cur.some(Boolean))) PAD.on = true;
+  if (!PAD.on) return;
+  if (S.screen === 'play' && !S.overlay) {
+    if (d) { if (d !== PAD.dir || (game.player.next !== d && game.player.dir !== d)) steer(d); }
+    if (edge(9)) { S.screen = 'paused'; PAD.focus = 0; SND.sfx('tap'); }
+    else if (edge(8)) openSettings();
+  } else {
+    const list = navButtons(), n = list.length;
+    PAD.navT -= dt;
+    if (d && n && (d !== PAD.dir || PAD.navT <= 0)) { const f = PAD.focus % n, b = list[f];
+      // spatial move: nearest button in that direction
+      let best = -1, bd = 1e9; list.forEach((o, i) => { if (i === f) return; const dx = (o.x + o.w / 2) - (b.x + b.w / 2), dy = (o.y + o.h / 2) - (b.y + b.h / 2);
+        const ok = d === 'up' ? dy < -4 : d === 'down' ? dy > 4 : d === 'left' ? dx < -4 : dx > 4; if (!ok) return; const v = (d === 'up' || d === 'down') ? Math.abs(dy) + Math.abs(dx) * 2 : Math.abs(dx) + Math.abs(dy) * 2; if (v < bd) { bd = v; best = i; } });
+      if (best >= 0) { PAD.focus = best; SND.sfx('tap'); } PAD.navT = d !== PAD.dir ? 0.35 : 0.16; }
+    if (edge(0) && n) onButton(list[PAD.focus % n].id);
+    else if (edge(1)) { if (S.overlay) closeOverlay(); else if (S.screen === 'paused') S.screen = 'play'; else if (S.screen === 'over') onButton('quit'); }
+    else if (edge(9)) { if (S.overlay) closeOverlay(); else if (S.screen === 'paused') S.screen = 'play'; else if (S.screen === 'title' || S.screen === 'over') startGame(); }
+    else if (edge(8)) { if (S.overlay) closeOverlay(); else openSettings(); }
+  }
+  PAD.dir = d;
+}
+window.addEventListener('gamepadconnected', () => { PAD.on = true; PAD.focus = 0; });
+window.addEventListener('gamepaddisconnected', () => { PAD.on = false; });
 function drawPlay() {
   const { T, mx, my, W, H } = L, g = game;
   if (!mazeCache || mazeCache.lvl !== g.level) { mazeCache = makeMaze(); mazeCache.lvl = g.level; }
@@ -320,7 +390,7 @@ function drawPlay() {
   const hy = 30;
   txt('SCORE', 14, hy - 12, 11, '#9fd07a', 'left', 700); txt(String(g.score), 14, hy + 6, 20, '#fff', 'left');
   txt('BEST', VW / 2, hy - 12, 11, '#9fd07a', 'center', 700); txt(String(Math.max(g.high, S.best)), VW / 2, hy + 6, 20, '#ffe27a');
-  txt('LV ' + g.level, VW - 66, hy - 3, 15, '#bfeaa0', 'right');
+  txt('LV ' + g.level, VW - (PAD.on ? 80 : 66), hy - 3, 15, '#bfeaa0', 'right');
   button('pause', 'II', VW - 52, hy - 19, 40, 40, 'icon');
   // footer: lives + fruit history
   const fy = L.footY + 14;
@@ -365,7 +435,7 @@ function drawTitle() {
   button('play', 'PLAY', cx - bw / 2, by, bw, 58 * Math.max(0.85, sc), 'primary');
   const sh = 44 * Math.max(0.85, sc), sy = by + 58 * Math.max(0.85, sc) + 12;
   button('dpad', 'D-pad: ' + (S.dpad ? 'ON' : 'OFF'), cx - bw / 2, sy, bw / 2 - 6, sh); button('sound', 'Sound: ' + (S.sound ? 'ON' : 'OFF'), cx + 6, sy, bw / 2 - 6, sh);
-  txt('Best ' + S.best + '  ·  Swipe or D-pad to steer', cx, sy + sh + 22, 13, '#9fb88a', 'center', 600);
+  txt('Best ' + S.best + '  ·  ' + (PAD.on ? 'Controller connected' : 'Swipe, D-pad or controller'), cx, sy + sh + 22, 13, '#9fb88a', 'center', 600);
   ctx.restore(); drawButtons();
 }
 
@@ -377,12 +447,13 @@ function startGame() {
 }
 function saveBest() { if (game.score > S.best) { S.best = game.score; S.newBest = true; LS.set('cc_high', S.best); } if (game.level > S.bestLevel) { S.bestLevel = game.level; LS.set('cc_bestlvl', S.bestLevel); } }
 function onButton(id) {
-  SND.init(); SND.sfx('tap');
+  SND.init(); SND.sfx('tap'); if (id !== 'dpad' && id !== 'sound') PAD.focus = 0;
   if (id === 'play' || id === 'again' || id === 'restart') startGame();
   else if (id === 'dpad') { S.dpad = !S.dpad; LS.set('cc_dpad', S.dpad); layout(); }
   else if (id === 'sound') { S.sound = !S.sound; LS.set('cc_sound', S.sound); SND.setOn(S.sound); }
   else if (id === 'pause') { if (S.screen === 'play') S.screen = 'paused'; }
   else if (id === 'resume') S.screen = 'play';
+  else if (id === 'done') closeOverlay();
   else if (id === 'quit') { saveBest(); S.screen = 'title'; SND.stopMusic(); layout(); }
 }
 function handleEvents() {
@@ -403,7 +474,8 @@ function handleEvents() {
 let acc = 0, last = performance.now();
 function frame(t) {
   const dt = Math.min(0.1, (t - last) / 1000); last = t; now = (t - T0) / 1000;
-  if (S.screen === 'play' && !window.__manual) {
+  pollPad(dt);
+  if (S.screen === 'play' && !S.overlay && !window.__manual) {
     acc += dt; const STEP = 1 / 120; while (acc >= STEP) { acc -= STEP; if (window.__autopilot && game.state === 'play') { const d = botDir(game); if (d) game.queue(d); } game.update(STEP); handleEvents(); if (S.screen !== 'play') break; }
   } else acc = 0;
   for (let i = parts.length - 1; i >= 0; i--) { const q = parts[i]; q.x += q.vx * dt; q.y += q.vy * dt; q.vx *= 0.94; q.vy *= 0.94; q.vy += 30 * dt; q.rot += dt * 3; q.life -= dt; if (q.life <= 0) parts.splice(i, 1); }
@@ -447,7 +519,7 @@ window.addEventListener('keydown', e => {
 document.addEventListener('visibilitychange', () => { if (document.hidden && S.screen === 'play') S.screen = 'paused'; });
 
 // ---------- test hooks ----------
-window.JG = { art: { drawMonkey, drawBanana, drawChaser, leaf }, get game() { return game; }, S, buttons: () => buttons, layout: () => L, start: startGame, press: onButton,
+window.JG = { PAD, art: { drawMonkey, drawBanana, drawChaser, leaf }, get game() { return game; }, S, buttons: () => buttons, layout: () => L, start: startGame, press: onButton,
   step(n) { for (let i = 0; i < n; i++) { game.update(1 / 120); handleEvents(); } } };
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 layout(); requestAnimationFrame(frame);

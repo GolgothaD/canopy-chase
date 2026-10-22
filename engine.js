@@ -136,7 +136,7 @@ G.updatePlayer = function (dt) {
   // pre-turn ("cornering"): if close to a centre and the queued turn is open, snap and turn
   if (p.next && p.next !== p.dir) {
     const cx = Math.round(p.x), cy = Math.round(p.y), [nx, ny] = DIRS[p.next];
-    if (Math.abs(p.x - cx) + Math.abs(p.y - cy) < 0.28 && this.open(cx + nx, cy + ny, 'player')) { p.x = cx; p.y = cy; p.dir = p.next; p.next = null; p.moving = true; }
+    if (Math.abs(p.x - cx) + Math.abs(p.y - cy) < 0.34 && this.open(cx + nx, cy + ny, 'player')) { p.x = cx; p.y = cy; p.dir = p.next; p.next = null; p.moving = true; }
   }
   if (!p.moving && p.next) { const [nx, ny] = DIRS[p.next]; if (this.open(Math.round(p.x) + nx, Math.round(p.y) + ny, 'player')) { p.dir = p.next; p.next = null; p.moving = true; } }
   const bx = p.x, by = p.y;

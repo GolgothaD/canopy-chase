@@ -5,7 +5,7 @@ const { Game, DIRS, CHASERS, FRUITS } = CC;
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const LS = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
 const isTouch = matchMedia('(pointer:coarse)').matches || 'ontouchstart' in window;
-const S = { screen: 'title', dpad: LS.get('cc_dpad', isTouch), sound: LS.get('cc_sound', true), best: LS.get('cc_high', 0), bestLevel: LS.get('cc_bestlvl', 1) };
+const S = { screen: 'title', ctrl: LS.get('cc_ctrl', 'stick'), csize: LS.get('cc_csize', 'L'), hand: LS.get('cc_hand', 'right'), vib: LS.get('cc_vib', true), sound: LS.get('cc_sound', true), best: LS.get('cc_high', 0), bestLevel: LS.get('cc_bestlvl', 1) };
 let game = new Game(MAZES, { high: S.best, seed: (Date.now() & 0xffff) + 1 });
 let VW = 0, VH = 0, DPR = 1, L = {}, mazeCache = null, bgCache = null, T0 = performance.now(), now = 0;
 const parts = [], floats = []; let shake = 0, flash = 0, lastDir = null;
@@ -24,17 +24,21 @@ function layout() {
   DPR = Math.min(3, window.devicePixelRatio || 1); VW = window.innerWidth; VH = window.innerHeight;
   cv.width = Math.round(VW * DPR); cv.height = Math.round(VH * DPR); cv.style.width = VW + 'px'; cv.style.height = VH + 'px';
   const portrait = VH >= VW * 1.1, hud = 58, foot = 34, W = 19, H = 21;
-  let dp = 0, T, mx, my, pad = null;
+  let T, mx, my, pad = null, zone = null;
+  const ctl = S.ctrl !== 'swipe', D = { S: 140, M: 165, L: 190 }[S.csize] || 190;
   if (portrait) {
-    const dps = S.dpad ? Math.min(178, VW * 0.46, VH * 0.22) : 0;
-    T = Math.floor(Math.min((VW - 10) / W, (VH - hud - foot - dps - (S.dpad ? 16 : 8)) / H));
+    const want = ctl ? D + 28 : 0; // dedicated control strip below the footer
+    T = Math.floor(Math.min((VW - 10) / W, (VH - hud - foot - want - 6) / H));
     mx = Math.round((VW - T * W) / 2); my = hud;
-    if (S.dpad) { const top = my + T * H + foot; const r = dps / 2; pad = { x: VW / 2, y: Math.min(VH - r - 10, top + (VH - top) / 2), r }; }
+    if (ctl) { const top = my + T * H + foot, hgt = VH - top, r = Math.min(D / 2, hgt / 2 - 8, VW * 0.3);
+      const side = S.hand === 'left' ? -1 : 1, cx = S.ctrl === 'stick' ? VW / 2 + side * Math.min(VW * 0.22, VW / 2 - r - 18) : VW / 2 + side * Math.min(VW * 0.18, VW / 2 - r - 18);
+      zone = { x: 0, y: top, w: VW, h: hgt }; pad = { x: cx, y: top + hgt / 2, r, hx: cx, hy: top + hgt / 2 }; }
   } else {
     T = Math.floor(Math.min((VH - hud - foot) / H, (VW - 20) / W)); mx = Math.round((VW - T * W) / 2); my = hud;
-    if (S.dpad) { const space = mx - 20, r = Math.min(110, space / 2 - 6, VH * 0.22); if (r > 50) pad = { x: mx + T * W + 10 + space / 2, y: VH - r - 30, r }; }
+    if (ctl) { const space = (S.hand === 'left' ? mx : VW - mx - T * W) - 20, r = Math.min(D / 2, space / 2 - 6, VH * 0.3);
+      if (r > 50) { const zx = S.hand === 'left' ? 0 : mx + T * W, zw = S.hand === 'left' ? mx : VW - zx; zone = { x: zx, y: hud, w: zw, h: VH - hud }; const cx = zx + zw / 2, cy = VH - r - 40; pad = { x: cx, y: cy, r, hx: cx, hy: cy }; } }
   }
-  L = { T, mx, my, W, H, portrait, hud, foot, pad, footY: my + T * H + 4 };
+  L = { T, mx, my, W, H, portrait, hud, foot, pad, zone, footY: my + T * H + 4 };
   mazeCache = null; bgCache = null;
 }
 window.addEventListener('resize', layout);
@@ -308,8 +312,15 @@ function drawPadHints() {
 }
 function navButtons() { return S.screen === 'play' && !S.overlay ? [] : buttons.filter(b => b.id !== 'pause'); }
 function drawSettings() {
-  buttons = []; const w = Math.min(320, VW - 40), [x, y] = panel(w, 250); txt('SETTINGS', VW / 2, y + 38, 26, '#ffe27a');
-  button('dpad', 'On-screen D-pad: ' + (S.dpad ? 'ON' : 'OFF'), x + 24, y + 70, w - 48, 46); button('sound', 'Sound: ' + (S.sound ? 'ON' : 'OFF'), x + 24, y + 126, w - 48, 46); button('done', 'Done', x + 24, y + 186, w - 48, 46, 'primary'); drawButtons();
+  buttons = []; const w = Math.min(330, VW - 30), bh = 44, gap = 9, rows = [
+    ['ctrl', 'Controls: ' + { stick: 'Stick', dpad: 'D-pad', swipe: 'Swipe only' }[S.ctrl]],
+    ['csize', 'Control size: ' + { S: 'Small', M: 'Medium', L: 'Large' }[S.csize]],
+    ['hand', 'Handed: ' + (S.hand === 'left' ? 'Left' : 'Right')],
+    ['vib', 'Vibration: ' + (S.vib ? 'ON' : 'OFF')],
+    ['sound', 'Sound: ' + (S.sound ? 'ON' : 'OFF')]];
+  const hgt = 70 + (rows.length + 1) * (bh + gap) + 14, [x, y] = panel(w, hgt); txt('SETTINGS', VW / 2, y + 36, 26, '#ffe27a');
+  rows.forEach(([id, label], i) => button(id, label, x + 20, y + 64 + i * (bh + gap), w - 40, bh));
+  button('done', 'Done', x + 20, y + 64 + rows.length * (bh + gap) + 4, w - 40, bh, 'primary'); drawButtons();
 }
 function openSettings() { if (S.screen === 'play') S.screen = 'paused'; S.overlay = 'settings'; PAD.focus = 0; }
 function closeOverlay() { S.overlay = null; PAD.focus = 0; }
@@ -398,10 +409,27 @@ function drawPlay() {
   for (let k = 0, l = g.level; k < Math.min(5, l); k++) drawFruit(ctx, Math.min(6, l - 1 - k), L.mx + T * W - 14 - k * 24, fy, 9);
   if (g.frightT > 0) { const w = T * 5 * g.frightT / g.frightTime(); ctx.fillStyle = '#ffd43a'; ctx.fillRect(VW / 2 - w / 2, fy - 3, w, 6); }
   // d-pad
-  if (L.pad && S.screen === 'play') drawPad();
+  if (L.pad && S.screen !== 'title') (S.ctrl === 'stick' ? drawStick : drawPad)();
   drawButtons();
 }
+function drawStick() {
+  const p = L.pad, z = L.zone; ctx.save();
+  if (z && L.portrait) { ctx.fillStyle = 'rgba(4,14,6,0.45)'; ctx.fillRect(z.x, z.y, z.w, z.h); ctx.strokeStyle = 'rgba(111,174,74,0.25)'; ctx.beginPath(); ctx.moveTo(0, z.y + 0.5); ctx.lineTo(VW, z.y + 0.5); ctx.stroke(); }
+  const bx = p.x, by = p.y, r = p.r;
+  ctx.fillStyle = 'rgba(8,24,10,0.7)'; ctx.strokeStyle = 'rgba(140,200,100,0.55)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(bx, by, r, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = 'rgba(140,200,100,0.18)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(bx, by, r * STICK.dead, 0, 7); ctx.stroke();
+  for (const [d, a] of [['up', -Math.PI / 2], ['right', 0], ['down', Math.PI / 2], ['left', Math.PI]]) {
+    const on = stick.dir === d; ctx.save(); ctx.translate(bx + Math.cos(a) * r * 0.78, by + Math.sin(a) * r * 0.78); ctx.rotate(a);
+    if (on) { ctx.fillStyle = 'rgba(255,212,58,0.25)'; ctx.beginPath(); ctx.moveTo(-r * 0.6, 0); ctx.arc(-r * 0.78, 0, r, -0.6, 0.6); ctx.closePath(); ctx.fill(); }
+    ctx.fillStyle = on ? '#ffd43a' : 'rgba(200,230,170,0.55)'; ctx.beginPath(); ctx.moveTo(r * 0.12, 0); ctx.lineTo(-r * 0.07, -r * 0.11); ctx.lineTo(-r * 0.07, r * 0.11); ctx.fill(); ctx.restore(); }
+  const kx = bx + stick.kx, ky = by + stick.ky, kr = r * 0.42;
+  const gr = ctx.createRadialGradient(kx - kr * 0.3, ky - kr * 0.3, kr * 0.1, kx, ky, kr); gr.addColorStop(0, stick.id != null ? '#ffe58a' : '#9ccf6a'); gr.addColorStop(1, stick.id != null ? '#c99a1a' : '#3f7a2e');
+  ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(kx, ky, kr, 0, 7); ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2; ctx.stroke();
+  if (stick.id == null && game.state === 'ready' && L.portrait) txt('Drag anywhere here to steer', VW / 2, L.zone.y + 14, 12, '#9fb88a', 'center', 600);
+  ctx.restore();
+}
 function drawPad() {
+  if (L.zone && L.portrait) { ctx.fillStyle = 'rgba(4,14,6,0.45)'; ctx.fillRect(L.zone.x, L.zone.y, L.zone.w, L.zone.h); }
   const { x, y, r } = L.pad; ctx.save();
   ctx.fillStyle = 'rgba(8,24,10,0.55)'; ctx.strokeStyle = 'rgba(140,200,100,0.45)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.stroke();
   for (const [d, a] of [['up', -Math.PI / 2], ['right', 0], ['down', Math.PI / 2], ['left', Math.PI]]) {
@@ -434,8 +462,8 @@ function drawTitle() {
   const by = cy0 + 4 * rowH + 6 * sc, bw = Math.min(280, VW - 60);
   button('play', 'PLAY', cx - bw / 2, by, bw, 58 * Math.max(0.85, sc), 'primary');
   const sh = 44 * Math.max(0.85, sc), sy = by + 58 * Math.max(0.85, sc) + 12;
-  button('dpad', 'D-pad: ' + (S.dpad ? 'ON' : 'OFF'), cx - bw / 2, sy, bw / 2 - 6, sh); button('sound', 'Sound: ' + (S.sound ? 'ON' : 'OFF'), cx + 6, sy, bw / 2 - 6, sh);
-  txt('Best ' + S.best + '  ·  ' + (PAD.on ? 'Controller connected' : 'Swipe, D-pad or controller'), cx, sy + sh + 22, 13, '#9fb88a', 'center', 600);
+  button('settings', 'Settings', cx - bw / 2, sy, bw / 2 - 6, sh); button('sound', 'Sound: ' + (S.sound ? 'ON' : 'OFF'), cx + 6, sy, bw / 2 - 6, sh);
+  txt('Best ' + S.best + '  ·  ' + (PAD.on ? 'Controller connected' : 'Stick, D-pad, swipe or controller'), cx, sy + sh + 22, 13, '#9fb88a', 'center', 600);
   ctx.restore(); drawButtons();
 }
 
@@ -447,9 +475,13 @@ function startGame() {
 }
 function saveBest() { if (game.score > S.best) { S.best = game.score; S.newBest = true; LS.set('cc_high', S.best); } if (game.level > S.bestLevel) { S.bestLevel = game.level; LS.set('cc_bestlvl', S.bestLevel); } }
 function onButton(id) {
-  SND.init(); SND.sfx('tap'); if (id !== 'dpad' && id !== 'sound') PAD.focus = 0;
+  SND.init(); SND.sfx('tap'); if (!['ctrl', 'csize', 'hand', 'vib', 'sound'].includes(id)) PAD.focus = 0;
   if (id === 'play' || id === 'again' || id === 'restart') startGame();
-  else if (id === 'dpad') { S.dpad = !S.dpad; LS.set('cc_dpad', S.dpad); layout(); }
+  else if (id === 'settings') openSettings();
+  else if (id === 'ctrl') { S.ctrl = { stick: 'dpad', dpad: 'swipe', swipe: 'stick' }[S.ctrl]; LS.set('cc_ctrl', S.ctrl); layout(); }
+  else if (id === 'csize') { S.csize = { L: 'S', S: 'M', M: 'L' }[S.csize]; LS.set('cc_csize', S.csize); layout(); }
+  else if (id === 'hand') { S.hand = S.hand === 'left' ? 'right' : 'left'; LS.set('cc_hand', S.hand); layout(); }
+  else if (id === 'vib') { S.vib = !S.vib; LS.set('cc_vib', S.vib); if (S.vib) buzz(20); }
   else if (id === 'sound') { S.sound = !S.sound; LS.set('cc_sound', S.sound); SND.setOn(S.sound); }
   else if (id === 'pause') { if (S.screen === 'play') S.screen = 'paused'; }
   else if (id === 'resume') S.screen = 'play';
@@ -474,7 +506,7 @@ function handleEvents() {
 let acc = 0, last = performance.now();
 function frame(t) {
   const dt = Math.min(0.1, (t - last) / 1000); last = t; now = (t - T0) / 1000;
-  pollPad(dt);
+  pollPad(dt); holdSteer();
   if (S.screen === 'play' && !S.overlay && !window.__manual) {
     acc += dt; const STEP = 1 / 120; while (acc >= STEP) { acc -= STEP; if (window.__autopilot && game.state === 'play') { const d = botDir(game); if (d) game.queue(d); } game.update(STEP); handleEvents(); if (S.screen !== 'play') break; }
   } else acc = 0;
@@ -487,21 +519,53 @@ function frame(t) {
 
 // ---------- input ----------
 let padActive = null; const swipes = new Map(), padTouches = new Set();
-function steer(d) { if (S.screen !== 'play' || !d) return; game.queue(d); lastDir = d; }
+const STICK = { dead: 0.24, hyst: 1.35 }; const stick = { id: null, dir: null, kx: 0, ky: 0 };
+function buzz(ms) { if (S.vib && navigator.vibrate) try { navigator.vibrate(ms); } catch (e) {} }
+function steer(d) { if (S.screen !== 'play' || S.overlay || !d) return; game.queue(d); lastDir = d; }
 function hitButton(x, y) { for (const b of buttons) if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return b; return null; }
-function padDir(x, y) { const p = L.pad; if (!p || S.screen !== 'play') return undefined; const dx = x - p.x, dy = y - p.y, d = Math.hypot(dx, dy); if (d > p.r * 1.35) return undefined; if (d < p.r * 0.16) return null; return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'); }
+function inZone(x, y) { const z = L.zone; return z && x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h; }
+function padDir(x, y) { const p = L.pad; if (!p || S.screen !== 'play') return undefined; const dx = x - p.x, dy = y - p.y, d = Math.hypot(dx, dy); if (d > p.r * 1.35 && !inZone(x, y)) return undefined; if (d < p.r * 0.16) return null; return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'); }
+// stick: dead zone + dominant axis with hysteresis (sticky axis so diagonals don't flicker)
+function stickDir(dx, dy, r, cur) {
+  const ax = Math.abs(dx), ay = Math.abs(dy); if (Math.hypot(dx, dy) < r * STICK.dead) return null;
+  const horiz = d => d === 'left' || d === 'right';
+  let useX = ax > ay; if (cur) { if (horiz(cur) && ay < ax * STICK.hyst) useX = true; else if (!horiz(cur) && ax < ay * STICK.hyst) useX = false; }
+  return useX ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+}
+function stickMove(x, y) {
+  const p = L.pad, dx = x - p.x, dy = y - p.y, d = Math.hypot(dx, dy), k = d > p.r ? p.r / d : 1;
+  stick.kx = dx * k; stick.ky = dy * k;
+  const nd = stickDir(dx, dy, p.r, stick.dir);
+  if (nd && nd !== stick.dir) { buzz(10); steer(nd); }
+  stick.dir = nd;
+}
 const SW = 16;
 function down(id, x, y) {
   const b = hitButton(x, y); if (b) { onButton(b.id); return; }
-  const pd = padDir(x, y); if (pd !== undefined) { padTouches.add(id); padActive = pd; steer(pd); return; }
+  if (S.screen === 'play' && !S.overlay && S.ctrl === 'stick' && L.pad && (inZone(x, y) || Math.hypot(x - L.pad.x, y - L.pad.y) < L.pad.r * 1.2)) {
+    if (stick.id != null) return; stick.id = id; const p = L.pad, z = L.zone;
+    // floating: the stick base jumps to where the thumb lands (kept inside the zone)
+    if (z) { p.x = Math.max(z.x + p.r + 6, Math.min(z.x + z.w - p.r - 6, x)); p.y = Math.max(z.y + p.r + 6, Math.min(z.y + z.h - p.r - 6, y)); if (Math.hypot(x - p.x, y - p.y) > p.r * 0.5) { p.x = x; p.y = y; } }
+    stick.dir = null; stickMove(x, y); return;
+  }
+  if (S.ctrl === 'dpad') { const pd = padDir(x, y); if (pd !== undefined) { padTouches.add(id); if (pd && pd !== padActive) buzz(10); padActive = pd; steer(pd); return; } }
+  if (inZone(x, y)) return;
   swipes.set(id, { x, y });
 }
 function move(id, x, y) {
-  if (padTouches.has(id)) { const pd = padDir(x, y); if (pd) { if (pd !== padActive) { padActive = pd; steer(pd); } } return; }
+  if (id === stick.id) { stickMove(x, y); return; }
+  if (padTouches.has(id)) { const pd = padDir(x, y); if (pd) { if (pd !== padActive) { padActive = pd; buzz(10); steer(pd); } } return; }
   const s = swipes.get(id); if (!s) return; const dx = x - s.x, dy = y - s.y;
   if (Math.max(Math.abs(dx), Math.abs(dy)) >= SW) { steer(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up')); s.x = x; s.y = y; }
 }
-function up(id) { if (padTouches.delete(id) && !padTouches.size) padActive = null; swipes.delete(id); }
+function up(id) {
+  if (id === stick.id) { stick.id = null; stick.dir = null; stick.kx = stick.ky = 0; if (L.pad) { L.pad.x = L.pad.hx; L.pad.y = L.pad.hy; } }
+  if (padTouches.delete(id) && !padTouches.size) padActive = null; swipes.delete(id);
+}
+function holdSteer() { // a held stick/D-pad keeps its direction buffered, like holding a real joystick
+  const d = stick.id != null ? stick.dir : padTouches.size ? padActive : null;
+  if (d && S.screen === 'play' && game.player.dir !== d && game.player.next !== d) steer(d);
+}
 cv.addEventListener('touchstart', e => { e.preventDefault(); for (const t of e.changedTouches) down(t.identifier, t.clientX, t.clientY); }, { passive: false });
 cv.addEventListener('touchmove', e => { e.preventDefault(); for (const t of e.changedTouches) move(t.identifier, t.clientX, t.clientY); }, { passive: false });
 cv.addEventListener('touchend', e => { e.preventDefault(); for (const t of e.changedTouches) up(t.identifier); }, { passive: false });
@@ -519,7 +583,7 @@ window.addEventListener('keydown', e => {
 document.addEventListener('visibilitychange', () => { if (document.hidden && S.screen === 'play') S.screen = 'paused'; });
 
 // ---------- test hooks ----------
-window.JG = { PAD, art: { drawMonkey, drawBanana, drawChaser, leaf }, get game() { return game; }, S, buttons: () => buttons, layout: () => L, start: startGame, press: onButton,
+window.JG = { PAD, stick, stickDir, STICK, art: { drawMonkey, drawBanana, drawChaser, leaf }, get game() { return game; }, S, buttons: () => buttons, layout: () => L, start: startGame, press: onButton,
   step(n) { for (let i = 0; i < n; i++) { game.update(1 / 120); handleEvents(); } } };
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 layout(); requestAnimationFrame(frame);
